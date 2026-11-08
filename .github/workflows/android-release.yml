@@ -16,6 +16,8 @@ jobs:
     if: github.ref_name == github.event.repository.default_branch && !github.event.deleted
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      RELEASE_APK: release/Bedrock-QuickConnect-arm64-v8a.apk
     concurrency:
       group: android-release
       queue: max
@@ -49,7 +51,7 @@ jobs:
           flutter test
           (cd engine && go test -mod=readonly ./lan)
 
-      - name: Signierte APKs bauen und prüfen
+      - name: Signierte ARM64-APK bauen und prüfen
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           QUICKCONNECT_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -65,27 +67,24 @@ jobs:
           version=$(tr -d '\r' < pubspec.yaml | sed -nE 's/^version: ([0-9]+\.[0-9]+\.[0-9]+)\+[0-9]+$/\1/p')
           : "${version:?Versionsnummer fehlt in pubspec.yaml}"
           build=$((10000 + GITHUB_RUN_NUMBER))
-          flutter build apk --release --split-per-abi --target-platform android-arm64,android-x64 \
+          flutter build apk --release --split-per-abi --target-platform android-arm64 \
             --build-name "$version" --build-number "$build" \
             --dart-define="QUICKCONNECT_RELEASE_REPOSITORY=$GITHUB_REPOSITORY"
 
           tools="$ANDROID_HOME/build-tools/36.0.0"
           mkdir -p release
-          for abi in arm64-v8a x86_64; do
-            apk="release/Bedrock-QuickConnect-$abi.apk"
-            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "$apk"
-            "$tools/apksigner" verify --verbose "$apk"
-            badging=$("$tools/aapt" dump badging "$apk")
-            [[ "$badging" == *"name='de.quickconnect.app' versionCode='$build'"* ]]
-            [[ "$badging" == *"native-code: '$abi'"* ]]
-            entries=$(unzip -Z1 "$apk")
-            [[ "$entries" == *"lib/$abi/libquickconnect.so"* ]]
-            du -h "$apk"
-          done
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "$RELEASE_APK"
+          "$tools/apksigner" verify --verbose "$RELEASE_APK"
+          badging=$("$tools/aapt" dump badging "$RELEASE_APK")
+          [[ "$badging" == *"name='de.quickconnect.app' versionCode='$build'"* ]]
+          grep -Fxq "native-code: 'arm64-v8a'" <<< "$badging"
+          entries=$(unzip -Z1 "$RELEASE_APK")
+          [[ "$entries" == *"lib/arm64-v8a/libquickconnect.so"* ]]
+          du -h "$RELEASE_APK"
           echo "RELEASE_TAG=v$version-build.$build" >> "$GITHUB_ENV"
           echo "RELEASE_BUILD=$build" >> "$GITHUB_ENV"
 
-      - name: APKs unter GitHub Releases veröffentlichen
+      - name: ARM64-APK unter GitHub Releases veröffentlichen
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -103,11 +102,11 @@ jobs:
 
           if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>"$error"); then
             if [[ "$draft" == true ]]; then
-              gh release upload "$RELEASE_TAG" release/*.apk --clobber
+              gh release upload "$RELEASE_TAG" "$RELEASE_APK" --clobber
               gh release edit "$RELEASE_TAG" --draft=false --latest="$latest"
             fi
           elif grep -qi 'release not found' "$error"; then
-            gh release create "$RELEASE_TAG" release/*.apk --target "$GITHUB_SHA" \
+            gh release create "$RELEASE_TAG" "$RELEASE_APK" --target "$GITHUB_SHA" \
               --title "Bedrock QuickConnect $RELEASE_TAG" --generate-notes --latest="$latest"
           else
             cat "$error" >&2

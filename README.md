@@ -4,7 +4,7 @@ Mit Bedrock QuickConnect verbindest du deine Xbox mit einem ausgewählten Minecr
 
 ## So benutzt du die App
 
-1. Lade die passende APK unter [Releases](https://github.com/Kingdaniel4747/Bedrock-QuickConnect/releases) herunter und installiere sie. Für die meisten Android-Handys ist das die Datei `Bedrock-QuickConnect-arm64-v8a.apk`. Die App benötigt Android 10 oder neuer.
+1. Lade `Bedrock-QuickConnect-arm64-v8a.apk` unter [Releases](https://github.com/Kingdaniel4747/Bedrock-QuickConnect/releases) herunter und installiere sie. Die App benötigt ein ARM64-Gerät mit Android 10 oder neuer.
 2. Verbinde Handy und Xbox mit demselben lokalen Netzwerk.
 3. Füge in der App über **+** die Adresse und den Port deines Servers hinzu. Wähle den Server und tippe auf **Verbindung starten**.
 4. Öffne auf der Xbox in Minecraft die **LAN-Spiele** und wähle **Bedrock QuickConnect**. Minecraft verbindet sich anschließend mit dem gewählten Server.
