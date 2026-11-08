@@ -1,0 +1,1 @@
+github.com/df-mc/go-nethernet v1.0.27

@@ -1,0 +1,115 @@
+name: Android-Release
+
+on:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    if: github.ref_name == github.event.repository.default_branch && !github.event.deleted
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    concurrency:
+      group: android-release
+      queue: max
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.1'
+          cache-dependency-path: engine/go.sum
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.7'
+          channel: stable
+          cache: true
+
+      - name: Android SDK und NDK einrichten
+        run: |
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          chmod +x android/gradlew
+
+      - name: Tests ausführen
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter analyze
+          flutter test
+          (cd engine && go test -mod=readonly ./lan)
+
+      - name: Signierte APKs bauen und prüfen
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          QUICKCONNECT_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          : "${KEYSTORE_BASE64:?ANDROID_KEYSTORE_BASE64 fehlt}"
+          : "${QUICKCONNECT_KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD fehlt}"
+          umask 077
+          export QUICKCONNECT_KEYSTORE="$RUNNER_TEMP/quickconnect.p12"
+          trap 'rm -f "$QUICKCONNECT_KEYSTORE"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$QUICKCONNECT_KEYSTORE"
+          unset KEYSTORE_BASE64
+
+          version=$(tr -d '\r' < pubspec.yaml | sed -nE 's/^version: ([0-9]+\.[0-9]+\.[0-9]+)\+[0-9]+$/\1/p')
+          : "${version:?Versionsnummer fehlt in pubspec.yaml}"
+          build=$((10000 + GITHUB_RUN_NUMBER))
+          flutter build apk --release --split-per-abi --target-platform android-arm64,android-x64 \
+            --build-name "$version" --build-number "$build" \
+            --dart-define="QUICKCONNECT_RELEASE_REPOSITORY=$GITHUB_REPOSITORY"
+
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          mkdir -p release
+          for abi in arm64-v8a x86_64; do
+            apk="release/Bedrock-QuickConnect-$abi.apk"
+            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "$apk"
+            "$tools/apksigner" verify --verbose "$apk"
+            badging=$("$tools/aapt" dump badging "$apk")
+            [[ "$badging" == *"name='de.quickconnect.app' versionCode='$build'"* ]]
+            [[ "$badging" == *"native-code: '$abi'"* ]]
+            entries=$(unzip -Z1 "$apk")
+            [[ "$entries" == *"lib/$abi/libquickconnect.so"* ]]
+            du -h "$apk"
+          done
+          echo "RELEASE_TAG=v$version-build.$build" >> "$GITHUB_ENV"
+          echo "RELEASE_BUILD=$build" >> "$GITHUB_ENV"
+
+      - name: APKs unter GitHub Releases veröffentlichen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          error="$RUNNER_TEMP/release-error"
+          latest=true
+          if current=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>"$error"); then
+            if [[ "$current" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-build\.([0-9]+)$ ]] &&
+              (( BASH_REMATCH[1] > RELEASE_BUILD )); then
+              latest=false
+            fi
+          elif ! grep -q 'HTTP 404' "$error"; then
+            cat "$error" >&2
+            exit 1
+          fi
+
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>"$error"); then
+            if [[ "$draft" == true ]]; then
+              gh release upload "$RELEASE_TAG" release/*.apk --clobber
+              gh release edit "$RELEASE_TAG" --draft=false --latest="$latest"
+            fi
+          elif grep -qi 'release not found' "$error"; then
+            gh release create "$RELEASE_TAG" release/*.apk --target "$GITHUB_SHA" \
+              --title "Bedrock QuickConnect $RELEASE_TAG" --generate-notes --latest="$latest"
+          else
+            cat "$error" >&2
+            exit 1
+          fi

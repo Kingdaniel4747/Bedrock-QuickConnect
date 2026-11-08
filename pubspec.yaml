@@ -1,0 +1,18 @@
+name: bedrock_quickconnect
+description: Lokaler NetherNet-Connector für Minecraft Bedrock.
+publish_to: none
+version: 0.1.3+4
+environment:
+  sdk: ^3.13.0
+dependencies:
+  flutter:
+    sdk: flutter
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+flutter:
+  uses-material-design: true
+  assets:
+    - THIRD-PARTY.md
+
+
